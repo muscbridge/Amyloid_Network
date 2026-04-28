@@ -1,0 +1,161 @@
+---
+title: "amyloidnetwork_fig"
+author: "Sara A. Nolin"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load required libraries
+
+```{r libraries}
+library(readxl)
+library(ggplot2)
+library(readr)
+library(see)
+library(dplyr)
+library(tidyverse)
+```
+
+## Load data_long from CSV
+```{r dataload_data_long}
+# Read the CSV file
+data_long <- read_csv("~/Downloads/amyloid_network_docs/data_long.csv")
+data_long$network_type[data_long$network_type == "NonCognitive"] <- "Non-Cognitive"
+
+# Calculate the average amyloid for cognitive and non-cognitive networks for each person
+averaged_data <- data_long %>%
+  group_by(studyid, network_type) %>%
+  summarise(avg_amyloid = mean(Amyloid)) %>%
+  spread(network_type, avg_amyloid)
+
+averaged_data_long <- averaged_data %>%
+  pivot_longer(cols = c(`Non-Cognitive`, Cognitive),
+               names_to = "network_type",
+               values_to = "Amyloid")
+
+# Ensure proper factor ordering
+averaged_data_long$network_type <- factor(averaged_data_long$network_type, levels = c("Non-Cognitive", "Cognitive"))
+```
+
+## Plot of Amyloid in Cognitive vs Non-Cognitive Networks
+```{r cognitive_vs_noncognitive_networks violins}
+
+ggplot(averaged_data_long, aes(x = network_type, y = Amyloid, fill = network_type)) +
+  # Half violin plots
+  geom_violinhalf(trim = FALSE, position = position_dodge(width = 0.5), aes(color = network_type), flip = c(1, 3), alpha = 0.5)   +  
+  # Connecting lines for same studyid
+  geom_line(aes(group = studyid), color = "grey", alpha = 0.5) +  
+  # Scatter plot with jitter
+  geom_point(position = position_jitterdodge(jitter.width = 0.08, dodge.width = 1, seed = 1), aes(color = network_type), alpha = 0.25, size = 2, shape = 21, stroke = 0.5) +  
+  # Boxplot overlay (small)
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.1) +  
+  # Significance line between groups
+  geom_segment(aes(x = 1, xend = 1.99, y = max(averaged_data_long$Amyloid, na.rm = TRUE) + 0.05, yend = max(averaged_data_long$Amyloid, na.rm = TRUE) + 0.05), linewidth = 0.5, color = "black") +  
+  # Asterisk for significance centered between groups
+  annotate("text", x = 1.5, y = max(averaged_data_long$Amyloid, na.rm = TRUE) + 0.07, label = "***", size = 6) +  
+  # Custom colors
+  scale_fill_manual(values = c("#4D4D4D", "#FF4500")) +  
+  scale_color_manual(values = c("#4D4D4D", "#FF4500")) +  
+  # Adjust theme
+  theme_minimal() +  
+  theme(plot.title = element_blank(), legend.position = "none", panel.grid.major.y = element_line(color ="aliceblue")) +  # Add horizontal grid lines
+  # Labels
+  xlab("Network Type") +  
+  ylab("Network Amyloid Burden (msuvr)")+ 
+  scale_x_discrete(expand = c(0.1, 0)) + 
+  theme(plot.margin = margin(5, 5, 5, 5), axis.text.x = element_text(margin = margin(t = 5)))
+
+ggsave("~/Downloads/amyloid_network_docs/violins.png", width = 4, height = 5, dpi = 300)
+
+```
+
+
+
+## Load data from results of SAS outputs
+```{r dataload}
+Model3_fig <- read_excel("~/Downloads/amyloid_network_docs/amyloid_results_forR.xlsx", 
+    sheet = "Model3_fig")
+Model5_fig <- read_excel("~/Downloads/amyloid_network_docs/amyloid_results_forR.xlsx", 
+    sheet = "Model 5_fig")
+Model6_fig <- read_excel("~/Downloads/amyloid_network_docs/amyloid_results_forR.xlsx", 
+    sheet = "Model 6_fig")
+```
+
+## Plot network type x AB group interaction estimated effects
+```{r networktype_group_interact_plot}
+ggplot(Model3_fig, aes(x = network_type, y = Estimate, color = pet_read)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +        # Plot points for the means
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, 
+                position = position_dodge(width = 0.3)) +  
+  scale_color_manual(values = c("#4D4D4D","#FF4500")) + 
+  scale_y_continuous(limits = c(1.1, 1.7)) +
+  labs(y = "Estimated Marginal Mean of NAB",
+       x = "Network Type",
+       color = "AB Group") +      # Customize labels
+  theme_minimal() 
+ggsave("~/Downloads/amyloid_network_docs/4a.png", width = 4, height = 5, dpi = 300)
+
+```
+
+## Plot of age x network interaction
+```{r network_age_interact_plot}
+# Set the factor levels in the data
+Model5_fig$Network <- factor(Model5_fig$Network, levels = c("SOM", "VIS", "LIM", "DAT", "VAT", "DMN", "FPN"))
+# network colors
+colors <- c("SOM" = "lightblue", 
+            "LIM" = "yellow", 
+            "VAT" = "magenta", 
+            "DAT" = "green", 
+            "FPN" = "orange", 
+            "DMN" = "red",
+            "VIS" = "purple")
+ggplot(Model5_fig, aes(x = age, y = Estimate, group = Network)) +
+  geom_ribbon(aes(ymin = Lower, ymax = Upper, fill = Network),
+              alpha = 0.05, colour = NA) +
+  geom_line(aes(colour = Network)) +
+  scale_colour_manual(values = colors) +
+  scale_fill_manual(values = colors) +
+  scale_y_continuous(limits = c(1.1, 1.6)) +
+  scale_y_continuous(
+    limits = c(0.95, 1.5),
+    oob = scales::squish
+  ) +
+  labs(
+    x = "Age (years)",
+    y = "Estimated Marginal Means of NAB"
+  ) +
+  theme_bw() +
+  theme(
+    panel.border = element_blank(), 
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+ggsave("~/Downloads/amyloid_network_docs/Fig3.png", width = 5, height = 4, dpi = 300)
+
+```
+
+## Plot of network AB group interaction
+```{r network_group_interact_plot}
+# Set the factor levels in the data
+Model6_fig$Network <- factor(Model6_fig$Network, levels = c("SOM", "VIS", "LIM", "DAT", "VAT", "DMN", "FPN"))
+Model6_fig$PET_Read <- factor(Model6_fig$PET_Read, levels = c("AB-", "AB+"))
+
+# Create a ggplot to visualize the interaction between Network and AB_group
+ggplot(Model6_fig, aes(x = Network, y = Estimate, color = PET_Read)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +        # Plot points for the means
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, 
+                position = position_dodge(width = 0.3)) +               # Add error bars
+  scale_color_manual(values = c("#4D4D4D","#FF4500")) + 
+    scale_y_continuous(limits = c(1.1, 1.7)) +
+  labs(y = "Estimated Marginal Mean of NAB",
+       x = "Network",
+       color = "AB Group") +      # Customize labels
+  theme_minimal() 
+ggsave("~/Downloads/amyloid_network_docs/4b.png", width = 5, height = 5, dpi = 300)
+
+```
+

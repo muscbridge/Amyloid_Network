@@ -1,0 +1,79 @@
+---
+title: "IAM NAB Correlation"
+output: html_notebook
+---
+
+
+Load required libraries.
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(tidyverse)
+library(ppcor)
+```
+
+
+Initialization.
+```{r}
+df_long <- read.csv("/Volumes/vdrive/helpern_users/aghamoosa_s/01_Research_Projects/IAM_network_amyloid/IAM_NAB_long.csv")
+
+#convert to wide
+df_wide <- df_long %>%
+  dplyr::select(studyid, age, pet_read, Cer_avg, Nets_msuvr_avg, Network, Amyloid, gencomp_adjz, Non.Cognitive, Cognitive) %>%   # keep only these columns
+  pivot_wider(names_from = Network, values_from = Amyloid)
+
+
+
+```
+
+
+##Correlations
+
+Partial spearman
+```{r}
+
+df_corr <- df_wide %>%
+  dplyr::select(Cognitive, gencomp_adjz, age) %>%
+  tidyr::drop_na()   # removes any rows with NA in these columns
+
+
+pcor.test(df_corr$Cognitive,df_corr$gencomp_adjz, df_corr$age, method="spearman")
+
+
+```
+
+
+Plot
+```{r}
+# 1) Compute partial Spearman correlation (matches your call)
+pc <- pcor.test(df_corr$Cognitive, df_corr$gencomp_adjz, df_corr$age, method = "spearman")
+
+# 2) Create a data frame with ranks and residualize on rank(age)
+df_plot <- df_corr %>%
+  transmute(
+    cog_rank  = rank(Cognitive, ties.method = "average"),
+    gen_rank  = rank(gencomp_adjz, ties.method = "average"),
+    age_rank  = rank(age, ties.method = "average")
+  ) %>%
+  mutate(
+    # residuals from regressing cog_rank on age_rank
+    cog_resid = resid(lm(cog_rank ~ age_rank)),
+    # residuals from regressing gen_rank on age_rank
+    gen_resid = resid(lm(gen_rank ~ age_rank))
+  )
+
+# 3) Plot residuals vs residuals with a linear fit and annotate rho, p
+ggplot(df_plot, aes(x = gen_resid, y = cog_resid)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "#2c7fb8") +
+  labs(
+    x = "General Cognition Composite (residualized on age; rank scale)",
+    y = "Cognitive NAB (residualized on age; rank scale)",
+    title = "Partial Spearman Relationship: Cognitive vs gencomp_adjz (controlling for age)",
+    subtitle = paste0("Partial Spearman ρ = ",
+                      round(pc$estimate, 3),
+                      ", p = ", format.pval(pc$p.value, digits = 3))
+  ) +
+  theme_minimal()
+```
