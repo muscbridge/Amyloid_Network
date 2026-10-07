@@ -1,0 +1,131 @@
+#pull one participant data at a time and run through fmriprep and xcpd and return to drive
+#longitudinal and single time point versions
+#Sara Nolin
+#!/bin/bash
+
+# Define local and server paths
+SERVER_DIR="/run/user/1000/gvfs/smb-share:server=10.177.132.215,share=vdrive/helpern_users/helpern_j/IAM/IAM_Analysis/fmriprep"
+LOCAL_DIR="/home/cbiadmin/Documents/fmriprep"
+BIDS_LOCAL="$LOCAL_DIR/temp_BIDS"
+OUTPUT_LOCAL="$LOCAL_DIR/temp_output"
+FREESURFER_LOCAL="$OUTPUT_LOCAL/sourcedata/freesurfer"
+WRK_LOCAL="$LOCAL_DIR/wrk"
+
+# Ensure local directories exist
+mkdir -p "$BIDS_LOCAL"
+mkdir -p "$OUTPUT_LOCAL"
+mkdir -p "$FREESURFER_LOCAL"
+mkdir -p "$WRK_LOCAL"
+
+# ensure permissions are set correctly to enable deletion after process completes and transfer to vdrive
+sudo chown -R $USER: $HOME
+
+##Longitudinal
+# Get a list of participants from the server, THIS WILL NEED PASSWORD INPUT
+PARTICIPANTS=$(ssh cbiadmin@mama-arthur "ls $SERVER_DIR/BIDS_full | grep 'sub-'")  
+
+# Loop through each participant
+for participant in $PARTICIPANTS; do
+    echo "Processing participant: ${participant}"
+
+    # Copy BIDS directory for the participant
+    rsync -av --progress "$SERVER_DIR/BIDS_full/${participant}" "$BIDS_LOCAL/"
+
+    # Copy participant's FreeSurfer directory
+    rsync -av --progress "$SERVER_DIR/fmriprep_output/sourcedata/freesurfer/${participant}" "$FREESURFER_LOCAL/"
+
+    # Run fMRIPrep
+    docker run --rm -e DOCKER_VERSION_8395080871=20.10.7 -it \
+        -v "$BIDS_LOCAL:/input" \
+        -v "$OUTPUT_LOCAL:/output" \
+        -v "$OUTPUT_LOCAL/sourcedata/freesurfer/license.txt:/license" \
+        -v "$WRK_LOCAL:/wrk" \
+        nipreps/fmriprep:24.1.1 /input /output participant \
+        --participant-label ${participant} \
+        --fs-license-file /license --skip-bids-validation \
+        --output-spaces MNI152NLin6Asym T1w fsnative func fsLR \
+        --cifti-output --longitudinal -w /wrk --clean-workdir
+	
+	# Transfer fMRIPrep output back to the server
+    	rsync -rltD --progress "$OUTPUT_LOCAL/${participant}" "$SERVER_DIR/fmriprep_output/"
+
+    # Run xcp-d
+    docker run --rm -it \
+        -v "$OUTPUT_LOCAL:/fmriprep" \
+        -v "$LOCAL_DIR/xcp_d:/output" \
+        -v "$WRK_LOCAL:/wrk" \
+        pennlinc/xcp_d /fmriprep /output participant \
+        --participant-label ${participant} \
+        --mode linc -w /wrk --combine-runs --warp-surfaces-native2std --fd-thresh 0.5 --clean-workdir
+
+    # Transfer xcp-d output back to the server
+    rsync -rltD --progress "$LOCAL_DIR/xcp_d/${participant}" "$SERVER_DIR/xcp_d_output/"
+
+    # If transfers are successful, delete local files
+    if [ $? -eq 0 ]; then
+        echo "Successfully transferred ${participant}, deleting local files..."
+        rm -rf "$BIDS_LOCAL/${participant}" #delete bids folder
+        rm -rf "$OUTPUT_LOCAL/${participant}" #permission denied
+        rm -rf "$LOCAL_DIR/xcp_d/${participant}" #permission denied
+        rm -rf "$FREESURFER_LOCAL/${participant}"  # Delete FreeSurfer directory
+        rm -rf "$WRK_LOCAL/*"  # Delete contents of wrk directory
+    else
+        echo "Error: Failed to transfer ${participant} back to server."
+    fi
+
+done
+
+##single time point
+# Get a list of participants from the server, THIS WILL NEED PASSWORD INPUT
+PARTICIPANTS=$(ssh cbiadmin@mama-arthur "ls $SERVER_DIR/no_followup_bids | grep 'sub-'")  
+
+# Loop through each participant
+for participant in $PARTICIPANTS; do
+    echo "Processing participant: ${participant}"
+
+    # Copy BIDS directory for the participant
+    rsync -av --progress "$SERVER_DIR/no_followup_bids/${participant}" "$BIDS_LOCAL/"
+
+    # Copy participant's FreeSurfer directory
+    rsync -av --progress "$SERVER_DIR/no_followup_output/sourcedata/freesurfer/${participant}" "$FREESURFER_LOCAL/"
+
+    # Run fMRIPrep
+    docker run --rm -e DOCKER_VERSION_8395080871=20.10.7 -it \
+        -v "$BIDS_LOCAL:/input" \
+        -v "$OUTPUT_LOCAL:/output" \
+        -v "$OUTPUT_LOCAL/sourcedata/freesurfer/license.txt:/license" \
+        -v "$WRK_LOCAL:/wrk" \
+        nipreps/fmriprep:24.1.1 /input /output participant \
+        --participant-label ${participant} \
+        --fs-license-file /license --skip-bids-validation \
+        --output-spaces MNI152NLin6Asym T1w fsnative func fsLR \
+        --cifti-output -w /wrk --clean-workdir
+	
+	# Transfer fMRIPrep output back to the server
+    	rsync -rltD --progress "$OUTPUT_LOCAL/${participant}" "$SERVER_DIR/no_followup_output/"
+
+    # Run xcp-d
+    docker run --rm -it \
+        -v "$OUTPUT_LOCAL:/fmriprep" \
+        -v "$LOCAL_DIR/xcp_d:/output" \
+        -v "$WRK_LOCAL:/wrk" \
+        pennlinc/xcp_d /fmriprep /output participant \
+        --participant-label ${participant} \
+        --mode linc -w /wrk --combine-runs --warp-surfaces-native2std --fd-thresh 0.5 --clean-workdir
+
+    # Transfer xcp-d output back to the server
+    rsync -rltD --progress "$LOCAL_DIR/no_followup_xcp_d/${participant}" "$SERVER_DIR/xcp_d/"
+
+    # If transfers are successful, delete local files
+    if [ $? -eq 0 ]; then
+        echo "Successfully transferred ${participant}, deleting local files..."
+        rm -rf "$BIDS_LOCAL/${participant}" #delete bids folder
+        rm -rf "$OUTPUT_LOCAL/${participant}" #permission denied
+        rm -rf "$LOCAL_DIR/xcp_d/${participant}" #permission denied
+        rm -rf "$FREESURFER_LOCAL/${participant}"  # Delete FreeSurfer directory
+        rm -rf "$WRK_LOCAL/*"  # Delete contents of wrk directory
+    else
+        echo "Error: Failed to transfer ${participant} back to server."
+    fi
+
+done
